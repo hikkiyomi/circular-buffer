@@ -386,6 +386,111 @@ public:
         return size_ == 0;
     }
 
+    reference front() {
+        if (empty()) {
+            throw std::runtime_error("Cannot access empty container.");
+        }
+
+        return *begin();
+    }
+
+    const_reference front() const {
+        if (empty()) {
+            throw std::runtime_error("Cannot access empty container.");
+        }
+
+        return *begin();
+    }
+
+    reference back() {
+        if (empty()) {
+            throw std::runtime_error("Cannot access empty container.");
+        }
+
+        auto it = end();
+        
+        return *(--it);
+    }
+
+    const_reference back() const {
+        if (empty()) {
+            throw std::runtime_error("Cannot access empty container.");
+        }
+
+        auto it = end();
+        
+        return *(--it);
+    }
+public:
+    iterator insert(iterator p, const_reference t) {
+        for (auto it = end(); it != (p - 1); --it) {
+            *(it + 1) = *it;
+        }
+
+        *p = t;
+        
+        if (size_ < capacity_) {
+            ++size_;
+            end_pos_ = GetNextPosition(end_pos_);
+        }
+
+        return p;
+    }
+
+    iterator insert(iterator p, size_type n, const_reference t) {
+        for (auto it = end(); it != (p + n - 2); --it) {
+            *(it + 1) = *it;
+        }
+
+        for (size_type i = 0; i < n; ++i) {
+            *(p + i) = t;
+        }
+
+        if (size_ + n <= capacity_) {
+            size_ += n;
+            end_pos_ = (end_pos_ + n) % real_capacity_;
+        }
+
+        return p;
+    }
+    
+    template<typename InputIterator>
+    iterator insert(iterator p, InputIterator first, InputIterator last) {
+        InputIterator temp_first = first;
+        size_type n = 0;
+
+        while (temp_first != last) {
+            ++n;
+            ++temp_first;
+        }
+
+        for (auto it = end(); it != (p + n - 2); --it) {
+            *(it + 1) = *it;
+        }
+
+        for (size_type i = 0; i < n; ++i) {
+            *(p + i) = *first;
+            ++first;
+        }
+
+        if (size_ + n <= capacity_) {
+            size_ += n;
+            end_pos_ = (end_pos_ + n) % real_capacity_;
+        }
+
+        return p;
+    }
+
+    iterator insert(iterator p, const std::initializer_list<value_type>& init_list) {
+        return insert(p, init_list.begin(), init_list.end());
+    }
+
+    void clear() {
+        while (!empty()) {
+            pop_front();
+        }
+    }
+public:
     void push_front(const_reference element) {
         begin_pos_ = GetPrevPosition(begin_pos_);
 
@@ -434,42 +539,6 @@ public:
 
         --size_;
         end_pos_ = GetPrevPosition(end_pos_);
-    }
-
-    reference front() {
-        if (empty()) {
-            throw std::runtime_error("Cannot access empty container.");
-        }
-
-        return *begin();
-    }
-
-    const_reference front() const {
-        if (empty()) {
-            throw std::runtime_error("Cannot access empty container.");
-        }
-
-        return *begin();
-    }
-
-    reference back() {
-        if (empty()) {
-            throw std::runtime_error("Cannot access empty container.");
-        }
-
-        auto it = end();
-        
-        return *(--it);
-    }
-
-    const_reference back() const {
-        if (empty()) {
-            throw std::runtime_error("Cannot access empty container.");
-        }
-
-        auto it = end();
-        
-        return *(--it);
     }
 public:
     reference operator[](size_type n) {
