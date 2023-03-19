@@ -5,12 +5,14 @@
 #include <vector>
 
 int main(int, char**) {
-    CircularBuffer<int> a(5);
-    
-    //std::sort(a.begin(), a.end());
+    CircularBuffer<int> a({1, 2, 3});
 
-    for (auto x : a) {
-        std::cout << x << " ";
+    a.push_back(123);
+
+    sort(a.begin(), a.end());
+
+    for (auto i : a) {
+        std::cout << i << " ";
     }
 
     return 0;

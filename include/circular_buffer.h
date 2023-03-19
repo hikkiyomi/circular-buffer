@@ -3,27 +3,56 @@
 #include <algorithm>
 #include <cinttypes>
 #include <iostream>
+#include <iterator>
 
 template<typename Buffer>
 class BufferIterator {
 public:
-    using value_type = typename Buffer::value_type;
-    using reference = value_type&;
-    using pointer = value_type*;
+    using value_type        = typename Buffer::value_type;
+    using reference         = value_type&;
+    using pointer           = value_type*;
+    using size_type         = typename Buffer::size_type;
+    using difference_type   = typename Buffer::difference_type;
+    using iterator_category = std::random_access_iterator_tag;
 public:
-    BufferIterator(pointer ptr, pointer start, size_t capacity)
+    BufferIterator(pointer ptr, pointer start, size_type size)
         : ptr_(ptr)
         , start_(start)
-        , capacity_(capacity)
+        , size_(size)
+        , position_(ptr - start)
     {}
+public:
+    reference operator*() {
+        return *ptr_;
+    }
 
+    pointer operator->() {
+        return ptr_;
+    }
+
+    reference operator[](size_type index) {
+        return *(ptr_ + index);
+    }
+
+    BufferIterator& operator+=(const size_type& n) {
+        *this = *this + n;
+        return *this;
+    }
+
+    BufferIterator& operator-=(const size_type& n) {
+        *this = *this - n;
+        return *this;
+    }
+public:
     BufferIterator& operator++() {
         ++ptr_;
+        ++position_;
 
-        size_t distance = ptr_ - start_;
+        size_type distance = ptr_ - start_;
 
-        if (distance == capacity_ + 1) {
+        if (distance == size_ + 1) {
             ptr_ = start_;
+            position_ = 0;
         }
 
         return *this;
@@ -38,11 +67,13 @@ public:
 
     BufferIterator& operator--() {
         --ptr_;
+        --position_;
 
         int64_t distance = ptr_ - start_;
 
         if (distance == -1) {
-            ptr_ = start_ + capacity_;
+            ptr_ = start_ + size_;
+            position_ = size_;
         }
 
         return *this;
@@ -55,14 +86,33 @@ public:
         return iterator;
     }
 
-    reference operator*() {
-        return *ptr_;
+    BufferIterator operator+(size_type n) {
+        n %= size_;
+
+        if (size_ - position_ >= n) {
+            return BufferIterator(ptr_ + n, start_, size_);
+        }
+
+        n -= size_ - position_;
+
+        return BufferIterator(start_ + n - 1, start_, size_);
     }
 
-    pointer operator->() {
-        return ptr_;
+    BufferIterator operator-(size_type n) {
+        n %= size_;
+
+        return (*this + (size_ - n));
     }
 
+    size_type operator-(const BufferIterator& rhs) {
+        // ! changes needed
+        return ptr_ - rhs.ptr_;
+    }
+
+    friend BufferIterator& operator+(size_type lhs, const BufferIterator& rhs) {
+        return rhs + lhs;
+    }
+public:
     bool operator==(const BufferIterator& other) const {
         return ptr_ == other.ptr_;
     }
@@ -71,18 +121,30 @@ public:
         return !(*this == other);
     }
 
-    BufferIterator& operator+(size_t index) const {
-
+    bool operator>(const BufferIterator& other) const {
+        // ! changes needed
+        return ptr_ > other.ptr_;
     }
 
-    reference operator[](size_t index) {
-        return *(ptr_ + index);
+    bool operator<(const BufferIterator& other) const {
+        // ! changes needed
+        return ptr_ < other.ptr_;
+    }
+
+    bool operator>=(const BufferIterator& other) const {
+        // ! changes needed
+        return ptr_ >= other.ptr_;
+    }
+
+    bool operator<=(const BufferIterator& other) const {
+        // ! changes needed
+        return ptr_ <= other.ptr_;
     }
 private:
     pointer ptr_;
     pointer start_;
-    size_t capacity_;
-    size_t position_;
+    size_type size_;
+    size_type position_;
 };
 
 template<
@@ -90,45 +152,100 @@ template<
     typename Allocator = std::allocator<T>
 >
 class CircularBuffer {
-private:
-    size_t capacity_;
-    size_t size_;
-    T* data_;
-    Allocator alloc_;
 public:
-    using value_type      = T;
-    using reference       = T&;
-    using const_reference = const T&;
-    using iterator        = BufferIterator<CircularBuffer<T>>;
-    using const_iterator  = BufferIterator<CircularBuffer<const T>>;
-    using difference_type = int32_t;
-    using size_type       = size_t;
+    using value_type       = typename Allocator::value_type;
+    using reference        = value_type&;
+    using const_reference  = const value_type&;
+    using iterator         = BufferIterator<CircularBuffer<T>>;
+    using const_iterator   = BufferIterator<CircularBuffer<const T>>;
+    using difference_type  = typename Allocator::difference_type;
+    using size_type        = typename Allocator::size_type;
 public:
-    CircularBuffer() = default;
+    CircularBuffer()
+        : capacity_(0)
+        , size_(0)
+        , start_pos_(0)
+        , end_pos_(0)
+    {
+        data_ = alloc_.allocate(1);
+    }
 
-    CircularBuffer(size_t capacity)
+    CircularBuffer(size_type capacity)
         : capacity_(capacity)
-        , size_(capacity)
+        , size_(0)
+        , start_pos_(0)
+        , end_pos_(0)
+    {
+        data_ = alloc_.allocate(capacity_ + 1);
+    }
+
+    CircularBuffer(size_type size, const_reference fill_with)
+        : capacity_(size)
+        , size_(size)
+        , start_pos_(0)
+        , end_pos_(size)
     {
         data_ = alloc_.allocate(capacity_ + 1);
 
-        for (size_t i = 0; i < capacity_ + 1; ++i) {
-            data_[i] = 5 - i;
+        for (size_type i = 0; i < size; ++i) {
+            data_[i] = fill_with;
         }
     }
 
-    CircularBuffer(const CircularBuffer<T, Allocator>& other)
-        : capacity_(other.capacity_)
-        , size_(other.size_)
+    template<typename InputIterator>
+    CircularBuffer(InputIterator first, InputIterator last) {
+        InputIterator temp_first = first;
+        size_ = 0;
+
+        while (temp_first != last) {
+            ++size_;
+            ++temp_first;
+        }
+
+        capacity_ = size_;
+        start_pos_ = 0;
+        end_pos_ = size_;
+        data_ = alloc_.allocate(capacity_ + 1);
+
+        size_type current_index = start_pos_;
+
+        while (first != last) {
+            data_[current_index] = *first;
+            ++first;
+            ++current_index;
+        }
+    }
+
+    CircularBuffer(const std::initializer_list<value_type>& init_list)
+        : capacity_(init_list.end() - init_list.begin())
+        , size_(init_list.end() - init_list.begin())
+        , start_pos_(0)
+        , end_pos_(init_list.end() - init_list.begin())
     {
         data_ = alloc_.allocate(capacity_ + 1);
         
-        for (size_t i = 0; i < capacity_ + 1; ++i) {
+        auto current = init_list.begin();
+
+        for (size_type i = 0; i < size_; ++i) {
+            data_[i] = *current;
+            ++current;
+        }
+    }
+
+    CircularBuffer(const CircularBuffer<value_type, Allocator>& other)
+        : capacity_(other.capacity_)
+        , size_(other.size_)
+        , start_pos_(other.start_pos_)
+        , end_pos_(other.end_pos_)
+    {
+        data_ = alloc_.allocate(capacity_ + 1);
+        
+        for (size_type i = 0; i < capacity_ + 1; ++i) {
             data_[i] = other.data_[i];
         }
     }
 
-    CircularBuffer& operator=(const CircularBuffer<T, Allocator>& other) {
+    CircularBuffer& operator=(const CircularBuffer<value_type, Allocator>& other) {
         if (this == &other) {
             return *this;
         }
@@ -138,12 +255,31 @@ public:
         capacity_ = other.capacity_;
         size_ = other.size_;
         data_ = alloc_.allocate(capacity_ + 1);
+        start_pos_ = other.start_pos_;
+        end_pos_ = other.end_pos_;
 
-        for (size_t i = 0; i < capacity_ + 1; ++i) {
+        for (size_type i = 0; i < capacity_ + 1; ++i) {
             data_[i] = other.data_[i];
         }
 
         return *this;
+    }
+
+    CircularBuffer& operator=(const std::initializer_list<value_type>& other) {
+        alloc_.deallocate(data_, capacity_ + 1);
+
+        capacity_ = other.end() - other.begin();
+        size_ = capacity_;
+        data_ = alloc_.allocate(capacity_ + 1);
+        start_pos_ = 0;
+        end_pos_ = size_;
+
+        auto current = other.begin();
+
+        for (size_type i = 0; i < size_; ++i) {
+            data_[i] = *current;
+            ++current;
+        }
     }
 
     ~CircularBuffer() {
@@ -151,23 +287,27 @@ public:
     }
 public:
     iterator begin() {
-        return iterator(data_, data_, capacity_);
+        // ! changes needed
+        return iterator(data_ + start_pos_, data_, capacity_);
     }
 
     iterator end() {
-        return iterator(data_ + size_, data_, capacity_);
+        // ! changes needed
+        return iterator(data_ + end_pos_, data_, capacity_);
     }
 
     const_iterator cbegin() const {
-        return const_iterator(data_, data_, capacity_);
+        // ! changes needed
+        return const_iterator(data_ + start_pos_, data_, capacity_);
     }
 
     const_iterator cend() const {
-        return const_iterator(data_ + size_, data_, capacity_);
+        // ! changes needed
+        return const_iterator(data_ + end_pos_, data_, capacity_);
     }
 
     bool operator==(const CircularBuffer& other) const {
-        return size_ == other.size_ && std::equal(this->begin(), this->end(), other.begin());
+        return size_ == other.size_ && std::equal(begin(), end(), other.begin());
     }
 
     bool operator!=(const CircularBuffer& other) const {
@@ -175,7 +315,7 @@ public:
     }
 
     void swap(CircularBuffer& other) {
-        swap(*this, other);
+        std::swap(*this, other);
     }
 
     size_type size() const {
@@ -192,5 +332,33 @@ public:
 
     bool empty() const {
         return size_ == 0;
+    }
+
+    void push_back(const_reference element) {
+        if (size_ < capacity_) {
+            data_[size_] = element;
+            end_pos_ = GetNextPosition(end_pos_);
+            ++size_;
+
+            return;
+        }
+
+        std::swap(data_[start_pos_], data_[end_pos_]);
+
+        data_[end_pos_] = element;
+        start_pos_ = GetNextPosition(start_pos_);
+        end_pos_ = GetNextPosition(end_pos_);
+    }
+private:
+    size_type capacity_;
+    size_type size_;
+    value_type* data_;
+    Allocator alloc_;
+private:
+    size_type start_pos_;
+    size_type end_pos_;
+private:
+    size_type GetNextPosition(size_type pos) {
+        return (pos + 1) % (capacity_ + 1);
     }
 };
