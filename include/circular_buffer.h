@@ -2,8 +2,9 @@
 
 #include <algorithm>
 #include <cinttypes>
+#include <iostream>
 #include <iterator>
-#include <numeric>
+#include <limits>
 #include <stdexcept>
 
 template<typename Buffer>
@@ -91,13 +92,13 @@ public:
     BufferIterator operator+(size_type n) const {
         n %= size_;
 
-        if (size_ - position_ >= n) {
+        if (size_ - position_ - 1 >= n) {
             return BufferIterator(ptr_ + n, data_base_, data_begin_, size_);
         }
 
         n -= size_ - position_;
 
-        return BufferIterator(data_base_ + n - 1, data_base_, data_begin_, size_);
+        return BufferIterator(data_base_ + n, data_base_, data_begin_, size_);
     }
 
     BufferIterator operator-(size_type n) const {
@@ -179,16 +180,21 @@ public:
         , end_pos_(0)
     {
         data_ = alloc_.allocate(real_capacity_);
+        alloc_.construct(data_, value_type{});
     }
 
-    CircularBuffer(size_type capacity)
-        : capacity_(capacity)
-        , real_capacity_(capacity + 1)
-        , size_(0)
+    CircularBuffer(size_type size)
+        : capacity_(size)
+        , real_capacity_(size + 1)
+        , size_(size)
         , begin_pos_(0)
-        , end_pos_(0)
+        , end_pos_(size)
     {
         data_ = alloc_.allocate(real_capacity_);
+
+        for (size_type i = 0; i < real_capacity_; ++i) {
+            alloc_.construct(data_ + i, value_type{});
+        }
     }
 
     CircularBuffer(size_type size, const_reference fill_with)
@@ -200,8 +206,8 @@ public:
     {
         data_ = alloc_.allocate(real_capacity_);
 
-        for (size_type i = 0; i < size; ++i) {
-            data_[i] = fill_with;
+        for (size_type i = 0; i < real_capacity_; ++i) {
+            alloc_.construct(data_ + i, fill_with);
         }
     }
 
@@ -224,12 +230,16 @@ public:
         end_pos_ = size_;
         data_ = alloc_.allocate(real_capacity_);
 
-        size_type current_index = begin_pos_;
+        size_type current_index = 0;
 
         while (first != last) {
-            data_[current_index] = *first;
+            alloc_.construct(data_ + current_index, *first);
             ++first;
             ++current_index;
+        }
+
+        for (; current_index < real_capacity_; ++current_index) {
+            alloc_.construct(data_ + current_index, *(first - 1));
         }
     }
 
@@ -245,8 +255,12 @@ public:
         auto current = init_list.begin();
 
         for (size_type i = 0; i < size_; ++i) {
-            data_[i] = *current;
+            alloc_.construct(data_ + i, *current);
             ++current;
+        }
+
+        for (size_type i = size_; i < real_capacity_; ++i) {
+            alloc_.construct(data_ + i, *(current - 1));
         }
     }
 
@@ -260,13 +274,17 @@ public:
         data_ = alloc_.allocate(real_capacity_);
         
         for (size_type i = 0; i < real_capacity_; ++i) {
-            data_[i] = other.data_[i];
+            alloc_.construct(data_ + i, other.data_[i]);
         }
     }
 
     CircularBuffer& operator=(const CircularBuffer<value_type, Allocator>& other) {
         if (this == &other) {
             return *this;
+        }
+
+        for (size_type i = 0; i < real_capacity_; ++i) {
+            alloc_.destroy(data_ + i);
         }
 
         alloc_.deallocate(data_, real_capacity_);
@@ -279,7 +297,7 @@ public:
         end_pos_ = other.end_pos_;
 
         for (size_type i = 0; i < real_capacity_; ++i) {
-            data_[i] = other.data_[i];
+            alloc_.construct(data_ + i, other.data_[i]);
         }
 
         return *this;
@@ -298,12 +316,22 @@ public:
         auto current = other.begin();
 
         for (size_type i = 0; i < size_; ++i) {
-            data_[i] = *current;
+            alloc_.construct(data_ + i, *current);
             ++current;
         }
+
+        for (size_type i = size_; i < real_capacity_; ++i) {
+            alloc_.construct(data_ + i, *(current - 1));
+        }
+
+        return *this;
     }
 
-    virtual ~CircularBuffer() {
+    ~CircularBuffer() {
+        for (size_t i = 0; i < real_capacity_; ++i) {
+            alloc_.destroy(data_ + i);
+        }
+
         alloc_.deallocate(data_, real_capacity_);
     }
 public:
@@ -361,11 +389,21 @@ public:
         );
     }
 
-    bool operator==(const CircularBuffer& other) const {
+    template<typename Container>
+    bool operator==(const Container& other) const {
         return size_ == other.size_ && std::equal(begin(), end(), other.begin());
     }
 
-    bool operator!=(const CircularBuffer& other) const {
+    bool operator==(const std::initializer_list<value_type>& other) const {
+        return size_ == other.size_ && std::equal(begin(), end(), other.begin());
+    }
+
+    template<typename Container>
+    bool operator!=(const Container& other) const {
+        return !(*this == other);
+    }
+
+    bool operator!=(const std::initializer_list<value_type>& other) const {
         return !(*this == other);
     }
 
@@ -430,7 +468,7 @@ public:
     }
 public:
     iterator insert(iterator p, const_reference t) {
-        for (auto it = end(); it != (p - 1); --it) {
+        for (auto it = end() - 1; it != (p - 1); --it) {
             *(it + 1) = *it;
         }
 
@@ -445,7 +483,7 @@ public:
     }
 
     iterator insert(iterator p, size_type n, const_reference t) {
-        for (auto it = end(); it != (p + n - 2); --it) {
+        for (auto it = end() - 1; it != (p + n - 2); --it) {
             *(it + 1) = *it;
         }
 
@@ -474,7 +512,7 @@ public:
             ++temp_first;
         }
 
-        for (auto it = end(); it != (p + n - 2); --it) {
+        for (auto it = end() - 1; it != (p + n - 2); --it) {
             *(it + 1) = *it;
         }
 
@@ -541,7 +579,7 @@ public:
         value_type* ndata = alloc_.allocate(n + 1);
 
         for (size_type i = 0; i < real_capacity_; ++i) {
-            ndata[i] = data_[i];
+            alloc_.construct(ndata + i, data_[i]);
         }
 
         alloc_.deallocate(data_, real_capacity_);
@@ -565,7 +603,7 @@ public:
         auto it = end();
 
         while (size_ < n) {
-            *it = 0;
+            *it = value_type{};
             ++it;
             ++size_;
             end_pos_ = GetNextPosition(end_pos_); 
@@ -576,16 +614,24 @@ public:
         if (size_ <= n) {
             resize(n);
         } else {
+            for (size_type i = 0; i < real_capacity_; ++i) {
+                alloc_.destroy(data_ + i);
+            }
+
             alloc_.deallocate(data_, real_capacity_);
+
             value_type* ndata = alloc_.allocate(n);
 
+            begin_pos_ = 0;
+            end_pos_ = n;
+            size_ = n;
             capacity_ = n;
             real_capacity_ = n + 1;
             data_ = ndata;
         }
 
         for (size_type i = 0; i < real_capacity_; ++i) {
-            data_[i] = t;
+            alloc_.construct(data_ + i, t);
         }
     }
 
@@ -605,16 +651,24 @@ public:
         if (size_ <= n) {
             reserve(n);
         } else {
+            for (size_type i = 0; i < real_capacity_; ++i) {
+                alloc_.destroy(data_ + i);
+            }
+
             alloc_.deallocate(data_, real_capacity_);
+
             value_type* ndata = alloc_.allocate(n);
 
+            begin_pos_ = 0;
+            end_pos_ = n;
+            size_ = n;
             capacity_ = n;
             real_capacity_ = n + 1;
             data_ = ndata;
         }
 
         for (size_type i = 0; i < real_capacity_; ++i) {
-            data_[i] = *first;
+            alloc_.construct(data_ + i, *first);
             ++first;
         }
     }
@@ -762,6 +816,10 @@ public:
             return *this;
         }
 
+        for (size_t i = 0; i < this->real_capacity_; ++i) {
+            this->alloc_.destroy(this->data_ + i);
+        }
+
         this->alloc_.deallocate(this->data_, this->real_capacity_);
 
         this->capacity_ = other.capacity_;
@@ -779,6 +837,10 @@ public:
     }
 
     CircularBufferExt& operator=(const std::initializer_list<value_type>& other) {
+        for (size_t i = 0; i < this->real_capacity_; ++i) {
+            this->alloc_.destroy(this->data_ + i);
+        }
+
         this->alloc_.deallocate(this->data_, this->real_capacity_);
 
         this->capacity_ = other.end() - other.begin();
@@ -794,14 +856,66 @@ public:
             this->data_[i] = *current;
             ++current;
         }
+
+        return *this;
+    }
+public:
+    iterator begin() {
+        return iterator(
+            this->data_ + this->begin_pos_,
+            this->data_,
+            this->data_ + this->begin_pos_,
+            this->real_capacity_
+        );
     }
 
-    ~CircularBufferExt() override {
-        this->alloc_.deallocate(this->data_, this->real_capacity_);
+    iterator end() {
+        return iterator(
+            this->data_ + this->end_pos_,
+            this->data_,
+            this->data_ + this->begin_pos_,
+            this->real_capacity_
+        );
+    }
+
+    const_iterator begin() const {
+        return const_iterator(
+            this->data_ + this->begin_pos_,
+            this->data_,
+            this->data_ + this->begin_pos_,
+            this->real_capacity_
+        );
+    }
+
+    const_iterator end() const {
+        return const_iterator(
+            this->data_ + this->end_pos_,
+            this->data_,
+            this->data_ + this->begin_pos_,
+            this->real_capacity_
+        );
+    }
+
+    const_iterator cbegin() const {
+        return const_iterator(
+            this->data_ + this->begin_pos_,
+            this->data_,
+            this->data_ + this->begin_pos_,
+            this->real_capacity_
+        );
+    }
+
+    const_iterator cend() const {
+        return const_iterator(
+            this->data_ + this->end_pos_,
+            this->data_,
+            this->data_ + this->begin_pos_,
+            this->real_capacity_
+        );
     }
 public:
     iterator insert(iterator p, const_reference t) {
-        for (auto it = this->end(); it != (p - 1); --it) {
+        for (auto it = this->end() - 1; it != (p - 1); --it) {
             *(it + 1) = *it;
         }
 
@@ -818,7 +932,7 @@ public:
     }
 
     iterator insert(iterator p, size_type n, const_reference t) {
-        for (auto it = this->end(); it != (p + n - 2); --it) {
+        for (auto it = this->end() - 1; it != (p + n - 2); --it) {
             *(it + 1) = *it;
         }
 
@@ -826,7 +940,7 @@ public:
             *(p + i) = t;
         }
 
-        while (this->size + n > this->capacity_) {
+        while (this->size_ + n > this->capacity_) {
             this->reserve(this->capacity_ * 2);
         }
 
@@ -849,7 +963,7 @@ public:
             ++temp_first;
         }
 
-        for (auto it = this->end(); it != (p + n - 2); --it) {
+        for (auto it = this->end() - 1; it != (p + n - 2); --it) {
             *(it + 1) = *it;
         }
 
@@ -858,7 +972,7 @@ public:
             ++first;
         }
 
-        while (this->size + n > this->capacity_) {
+        while (this->size_ + n > this->capacity_) {
             this->reserve(this->capacity_ * 2);
         }
 
@@ -866,6 +980,38 @@ public:
         this->end_pos_ = (this->end_pos_ + n) % this->real_capacity_;
 
         return p;
+    }
+
+    iterator erase(iterator q) {
+        if (this->empty() || q >= this->end()) {
+            throw std::runtime_error("Cannot erase non-existing element");
+        }
+
+        for (auto it = q; it != this->end(); ++it) {
+            *it = *(it + 1);
+        }
+
+        --this->size_;
+        this->end_pos_ = this->GetPrevPosition(this->end_pos_);
+
+        return q;
+    }
+
+    iterator erase(iterator q1, iterator q2) {
+        size_type removed = q2 - q1;
+
+        if (this->empty() || this->size_ < removed || q1 >= end() || q2 >= end()) {
+            throw std::runtime_error("Cannot erase non-existing element");
+        }
+
+        for (auto it = q1; it + removed != this->end(); ++it) {
+            *it = *(it + removed);
+        }
+
+        this->size_ -= removed;
+        this->end_pos_ = ((this->end_pos_ - removed) % this->real_capacity_ + this->real_capacity_) % this->real_capacity_;
+
+        return q1;
     }
 
     void push_front(const_reference element) override {
