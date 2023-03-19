@@ -205,7 +205,10 @@ public:
         }
     }
 
-    template<typename InputIterator>
+    template<
+        typename InputIterator,
+        typename = std::_RequireInputIter<InputIterator>
+    >
     CircularBuffer(InputIterator first, InputIterator last) {
         InputIterator temp_first = first;
         size_ = 0;
@@ -300,7 +303,7 @@ public:
         }
     }
 
-    ~CircularBuffer() {
+    virtual ~CircularBuffer() {
         alloc_.deallocate(data_, real_capacity_);
     }
 public:
@@ -368,6 +371,10 @@ public:
 
     void swap(CircularBuffer& other) {
         std::swap(*this, other);
+    }
+
+    friend void swap(CircularBuffer& lhs, CircularBuffer& rhs) {
+        lhs.swap(rhs);
     }
 
     size_type size() const {
@@ -454,7 +461,10 @@ public:
         return p;
     }
     
-    template<typename InputIterator>
+    template<
+        typename InputIterator,
+        typename = std::_RequireInputIter<InputIterator>
+    >
     iterator insert(iterator p, InputIterator first, InputIterator last) {
         InputIterator temp_first = first;
         size_type n = 0;
@@ -485,13 +495,135 @@ public:
         return insert(p, init_list.begin(), init_list.end());
     }
 
+    iterator erase(iterator q) {
+        if (empty() || q >= end()) {
+            throw std::runtime_error("Cannot erase non-existing element");
+        }
+
+        for (auto it = q; it != end(); ++it) {
+            *it = *(it + 1);
+        }
+
+        --size_;
+        end_pos_ = GetPrevPosition(end_pos_);
+
+        return q;
+    }
+
+    iterator erase(iterator q1, iterator q2) {
+        size_type removed = q2 - q1;
+
+        if (empty() || size_ < removed || q1 >= end() || q2 >= end()) {
+            throw std::runtime_error("Cannot erase non-existing element");
+        }
+
+        for (auto it = q1; it + removed != end(); ++it) {
+            *it = *(it + removed);
+        }
+
+        size_ -= removed;
+        end_pos_ = ((end_pos_ - removed) % real_capacity_ + real_capacity_) % real_capacity_;
+
+        return q1;
+    }
+
     void clear() {
         while (!empty()) {
             pop_front();
         }
     }
+
+    void reserve(size_type n) {
+        if (capacity_ >= n) {
+            return;
+        }
+
+        value_type* ndata = alloc_.allocate(n + 1);
+
+        for (size_type i = 0; i < real_capacity_; ++i) {
+            ndata[i] = data_[i];
+        }
+
+        alloc_.deallocate(data_, real_capacity_);
+
+        capacity_ = n;
+        real_capacity_ = n + 1;
+        data_ = ndata;
+    }
+
+    void resize(size_type n) {
+        if (n <= size_) {
+            auto to_move = size_ - n;
+            
+            size_ = n;
+            end_pos_ = ((end_pos_ - to_move) % real_capacity_ + real_capacity_) % real_capacity_;
+
+            return;
+        }
+
+        reserve(n);
+        auto it = end();
+
+        while (size_ < n) {
+            *it = 0;
+            ++it;
+            ++size_;
+            end_pos_ = GetNextPosition(end_pos_); 
+        }
+    }
+
+    void assign(size_type n, const_reference t) {
+        if (size_ <= n) {
+            resize(n);
+        } else {
+            alloc_.deallocate(data_, real_capacity_);
+            value_type* ndata = alloc_.allocate(n);
+
+            capacity_ = n;
+            real_capacity_ = n + 1;
+            data_ = ndata;
+        }
+
+        for (size_type i = 0; i < real_capacity_; ++i) {
+            data_[i] = t;
+        }
+    }
+
+    template<
+        typename InputIterator,
+        typename = std::_RequireInputIter<InputIterator>
+    >
+    void assign(InputIterator first, InputIterator last) {
+        InputIterator temp_first = first;
+        size_type n = 0;
+
+        while (temp_first != last) {
+            ++n;
+            ++temp_first;
+        }
+
+        if (size_ <= n) {
+            reserve(n);
+        } else {
+            alloc_.deallocate(data_, real_capacity_);
+            value_type* ndata = alloc_.allocate(n);
+
+            capacity_ = n;
+            real_capacity_ = n + 1;
+            data_ = ndata;
+        }
+
+        for (size_type i = 0; i < real_capacity_; ++i) {
+            data_[i] = *first;
+            ++first;
+        }
+    }
+
+    void assign(const std::initializer_list<value_type>& init_list) {
+        assign(init_list.begin(), init_list.end());
+    }
 public:
-    void push_front(const_reference element) {
+    virtual void push_front(const_reference element) {
         begin_pos_ = GetPrevPosition(begin_pos_);
 
         if (size_ < capacity_) {
@@ -507,7 +639,7 @@ public:
         end_pos_ = GetPrevPosition(end_pos_);
     }
 
-    void push_back(const_reference element) {
+    virtual void push_back(const_reference element) {
         if (size_ < capacity_) {
             data_[size_] = element;
             end_pos_ = GetNextPosition(end_pos_);
@@ -564,21 +696,196 @@ public:
 
         return *(begin() + n);
     }
-private:
+protected:
     size_type capacity_;
     size_type real_capacity_;
     size_type size_;
     value_type* data_;
     Allocator alloc_;
-private:
+protected:
     size_type begin_pos_;
     size_type end_pos_;
-private:
+protected:
     size_type GetPrevPosition(size_type pos) {
         return pos <= 0 ? pos + real_capacity_ - 1 : pos - 1;
     }
 
     size_type GetNextPosition(size_type pos) {
         return pos + 1 >= real_capacity_ ? pos + 1 - real_capacity_ : pos + 1;
+    }
+};
+
+template<
+    typename T,
+    typename Allocator = std::allocator<T>
+>
+class CircularBufferExt : public CircularBuffer<T> {
+public:
+    using value_type       = typename Allocator::value_type;
+    using reference        = value_type&;
+    using const_reference  = const value_type&;
+    using iterator         = BufferIterator<CircularBufferExt<T>>;
+    using const_iterator   = BufferIterator<const CircularBufferExt<T>>;
+    using difference_type  = typename Allocator::difference_type;
+    using size_type        = typename Allocator::size_type;
+public:
+    CircularBufferExt()
+        : CircularBuffer<T>()
+    {}
+
+    CircularBufferExt(size_type capacity)
+        : CircularBuffer<T>(capacity)
+    {}
+
+    CircularBufferExt(size_type size, const_reference fill_with)
+        : CircularBuffer<T>(size, fill_with)
+    {}
+
+    template<
+        typename InputIterator,
+        typename = std::_RequireInputIter<InputIterator>
+    >
+    CircularBufferExt(InputIterator first, InputIterator last) 
+        : CircularBuffer<T>(first, last)
+    {}
+
+    CircularBufferExt(const std::initializer_list<value_type>& init_list)
+        : CircularBuffer<T>(init_list)
+    {}
+
+    CircularBufferExt(const CircularBufferExt<value_type, Allocator>& other)
+        : CircularBuffer<T>(other)
+    {}
+
+    CircularBufferExt& operator=(const CircularBufferExt<value_type, Allocator>& other) {
+        if (this == &other) {
+            return *this;
+        }
+
+        this->alloc_.deallocate(this->data_, this->real_capacity_);
+
+        this->capacity_ = other.capacity_;
+        this->real_capacity_ = other.real_capacity_;
+        this->size_ = other.size_;
+        this->data_ = this->alloc_.allocate(this->real_capacity_);
+        this->begin_pos_ = other.begin_pos_;
+        this->end_pos_ = other.end_pos_;
+
+        for (size_type i = 0; i < this->real_capacity_; ++i) {
+            this->data_[i] = other.data_[i];
+        }
+
+        return *this;
+    }
+
+    CircularBufferExt& operator=(const std::initializer_list<value_type>& other) {
+        this->alloc_.deallocate(this->data_, this->real_capacity_);
+
+        this->capacity_ = other.end() - other.begin();
+        this->real_capacity_ = this->capacity_ + 1;
+        this->size_ = this->capacity_;
+        this->data_ = this->alloc_.allocate(this->real_capacity_);
+        this->begin_pos_ = 0;
+        this->end_pos_ = this->size_;
+
+        auto current = other.begin();
+
+        for (size_type i = 0; i < this->size_; ++i) {
+            this->data_[i] = *current;
+            ++current;
+        }
+    }
+
+    ~CircularBufferExt() override {
+        this->alloc_.deallocate(this->data_, this->real_capacity_);
+    }
+public:
+    iterator insert(iterator p, const_reference t) {
+        for (auto it = this->end(); it != (p - 1); --it) {
+            *(it + 1) = *it;
+        }
+
+        *p = t;
+        
+        if (this->size_ == this->capacity_) {
+            this->reserve(this->capacity_ * 2);
+        }
+
+        ++this->size_;
+        this->end_pos_ = this->GetNextPosition(this->end_pos_);
+
+        return p;
+    }
+
+    iterator insert(iterator p, size_type n, const_reference t) {
+        for (auto it = this->end(); it != (p + n - 2); --it) {
+            *(it + 1) = *it;
+        }
+
+        for (size_type i = 0; i < n; ++i) {
+            *(p + i) = t;
+        }
+
+        while (this->size + n > this->capacity_) {
+            this->reserve(this->capacity_ * 2);
+        }
+
+        this->size_ += n;
+        this->end_pos_ = (this->end_pos_ + n) % this->real_capacity_;
+
+        return p;
+    }
+    
+    template<
+        typename InputIterator,
+        typename = std::_RequireInputIter<InputIterator>
+    >
+    iterator insert(iterator p, InputIterator first, InputIterator last) {
+        InputIterator temp_first = first;
+        size_type n = 0;
+
+        while (temp_first != last) {
+            ++n;
+            ++temp_first;
+        }
+
+        for (auto it = this->end(); it != (p + n - 2); --it) {
+            *(it + 1) = *it;
+        }
+
+        for (size_type i = 0; i < n; ++i) {
+            *(p + i) = *first;
+            ++first;
+        }
+
+        while (this->size + n > this->capacity_) {
+            this->reserve(this->capacity_ * 2);
+        }
+
+        this->size_ += n;
+        this->end_pos_ = (this->end_pos_ + n) % this->real_capacity_;
+
+        return p;
+    }
+
+    void push_front(const_reference element) override {
+        this->begin_pos_ = this->GetPrevPosition(this->begin_pos_);
+
+        if (this->size_ == this->capacity_) {
+            this->reserve(this->capacity_ * 2);
+        }
+
+        this->data_[this->begin_pos_] = element;
+        ++this->size_;
+    }
+
+    void push_back(const_reference element) override {
+        if (this->size_ == this->capacity_) {
+            this->reserve(this->capacity_ * 2);
+        }
+
+        this->data_[this->size_] = element;
+        this->end_pos_ = this->GetNextPosition(this->end_pos_);
+        ++this->size_;
     }
 };
