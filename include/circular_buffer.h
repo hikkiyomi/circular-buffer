@@ -2,8 +2,9 @@
 
 #include <algorithm>
 #include <cinttypes>
-#include <iostream>
 #include <iterator>
+#include <numeric>
+#include <stdexcept>
 
 template<typename Buffer>
 class BufferIterator {
@@ -174,7 +175,7 @@ public:
         : capacity_(0)
         , real_capacity_(1)
         , size_(0)
-        , start_pos_(0)
+        , begin_pos_(0)
         , end_pos_(0)
     {
         data_ = alloc_.allocate(real_capacity_);
@@ -184,7 +185,7 @@ public:
         : capacity_(capacity)
         , real_capacity_(capacity + 1)
         , size_(0)
-        , start_pos_(0)
+        , begin_pos_(0)
         , end_pos_(0)
     {
         data_ = alloc_.allocate(real_capacity_);
@@ -194,7 +195,7 @@ public:
         : capacity_(size)
         , real_capacity_(size + 1)
         , size_(size)
-        , start_pos_(0)
+        , begin_pos_(0)
         , end_pos_(size)
     {
         data_ = alloc_.allocate(real_capacity_);
@@ -216,11 +217,11 @@ public:
 
         capacity_ = size_;
         real_capacity_ = size_ + 1;
-        start_pos_ = 0;
+        begin_pos_ = 0;
         end_pos_ = size_;
         data_ = alloc_.allocate(real_capacity_);
 
-        size_type current_index = start_pos_;
+        size_type current_index = begin_pos_;
 
         while (first != last) {
             data_[current_index] = *first;
@@ -233,7 +234,7 @@ public:
         : capacity_(init_list.end() - init_list.begin())
         , real_capacity_(init_list.end() - init_list.begin() + 1)
         , size_(init_list.end() - init_list.begin())
-        , start_pos_(0)
+        , begin_pos_(0)
         , end_pos_(init_list.end() - init_list.begin())
     {
         data_ = alloc_.allocate(real_capacity_);
@@ -250,7 +251,7 @@ public:
         : capacity_(other.capacity_)
         , real_capacity_(other.real_capacity_)
         , size_(other.size_)
-        , start_pos_(other.start_pos_)
+        , begin_pos_(other.begin_pos_)
         , end_pos_(other.end_pos_)
     {
         data_ = alloc_.allocate(real_capacity_);
@@ -271,7 +272,7 @@ public:
         real_capacity_ = other.real_capacity_;
         size_ = other.size_;
         data_ = alloc_.allocate(real_capacity_);
-        start_pos_ = other.start_pos_;
+        begin_pos_ = other.begin_pos_;
         end_pos_ = other.end_pos_;
 
         for (size_type i = 0; i < real_capacity_; ++i) {
@@ -288,7 +289,7 @@ public:
         real_capacity_ = capacity_ + 1;
         size_ = capacity_;
         data_ = alloc_.allocate(real_capacity_);
-        start_pos_ = 0;
+        begin_pos_ = 0;
         end_pos_ = size_;
 
         auto current = other.begin();
@@ -305,9 +306,9 @@ public:
 public:
     iterator begin() {
         return iterator(
-            data_ + start_pos_,
+            data_ + begin_pos_,
             data_,
-            data_ + start_pos_,
+            data_ + begin_pos_,
             real_capacity_
         );
     }
@@ -316,16 +317,16 @@ public:
         return iterator(
             data_ + end_pos_,
             data_,
-            data_ + start_pos_,
+            data_ + begin_pos_,
             real_capacity_
         );
     }
 
     const_iterator begin() const {
         return const_iterator(
-            data_ + start_pos_,
+            data_ + begin_pos_,
             data_,
-            data_ + start_pos_,
+            data_ + begin_pos_,
             real_capacity_
         );
     }
@@ -334,16 +335,16 @@ public:
         return const_iterator(
             data_ + end_pos_,
             data_,
-            data_ + start_pos_,
+            data_ + begin_pos_,
             real_capacity_
         );
     }
 
     const_iterator cbegin() const {
         return const_iterator(
-            data_ + start_pos_,
+            data_ + begin_pos_,
             data_,
-            data_ + start_pos_,
+            data_ + begin_pos_,
             real_capacity_
         );
     }
@@ -352,7 +353,7 @@ public:
         return const_iterator(
             data_ + end_pos_,
             data_,
-            data_ + start_pos_,
+            data_ + begin_pos_,
             real_capacity_
         );
     }
@@ -374,7 +375,7 @@ public:
     }
 
     size_type max_size() const {
-        return capacity_;
+        return std::numeric_limits<size_type>::max() / sizeof(value_type);
     }
 
     size_type capacity() const {
@@ -383,6 +384,22 @@ public:
 
     bool empty() const {
         return size_ == 0;
+    }
+
+    void push_front(const_reference element) {
+        begin_pos_ = GetPrevPosition(begin_pos_);
+
+        if (size_ < capacity_) {
+            data_[begin_pos_] = element;
+            ++size_;
+
+            return;
+        }
+
+        std::swap(data_[end_pos_], data_[GetPrevPosition(end_pos_)]);
+        
+        data_[begin_pos_] = element;
+        end_pos_ = GetPrevPosition(end_pos_);
     }
 
     void push_back(const_reference element) {
@@ -394,11 +411,89 @@ public:
             return;
         }
 
-        std::swap(data_[start_pos_], data_[end_pos_]);
+        std::swap(data_[begin_pos_], data_[end_pos_]);
 
         data_[end_pos_] = element;
-        start_pos_ = GetNextPosition(start_pos_);
+        begin_pos_ = GetNextPosition(begin_pos_);
         end_pos_ = GetNextPosition(end_pos_);
+    }
+
+    void pop_front() {
+        if (empty()) {
+            throw std::runtime_error("Cannot delete the element from empty buffer.");
+        }
+
+        --size_;
+        begin_pos_ = GetNextPosition(begin_pos_);
+    }
+
+    void pop_back() {
+        if (empty()) {
+            throw std::runtime_error("Cannot delete the element from empty buffer.");
+        }
+
+        --size_;
+        end_pos_ = GetPrevPosition(end_pos_);
+    }
+
+    reference front() {
+        if (empty()) {
+            throw std::runtime_error("Cannot access empty container.");
+        }
+
+        return *begin();
+    }
+
+    const_reference front() const {
+        if (empty()) {
+            throw std::runtime_error("Cannot access empty container.");
+        }
+
+        return *begin();
+    }
+
+    reference back() {
+        if (empty()) {
+            throw std::runtime_error("Cannot access empty container.");
+        }
+
+        auto it = end();
+        
+        return *(--it);
+    }
+
+    const_reference back() const {
+        if (empty()) {
+            throw std::runtime_error("Cannot access empty container.");
+        }
+
+        auto it = end();
+        
+        return *(--it);
+    }
+public:
+    reference operator[](size_type n) {
+        return *(begin() + n);
+    }
+
+    const_reference operator[](size_type n) const {
+        return *(begin() + n);
+    }
+
+    reference at(size_type n) {
+        if (n >= size()) {
+            throw std::out_of_range("The index of element exceeds the size of buffer.");
+        }
+
+        return *(begin() + n);
+    }
+
+    const_reference at(size_type n) const {
+        if (n >= size()) {
+            throw std::out_of_range("The index of element exceeds the size of buffer.");
+        }
+
+        return *(begin() + n);
     }
 private:
     size_type capacity_;
@@ -407,10 +502,14 @@ private:
     value_type* data_;
     Allocator alloc_;
 private:
-    size_type start_pos_;
+    size_type begin_pos_;
     size_type end_pos_;
 private:
+    size_type GetPrevPosition(size_type pos) {
+        return pos <= 0 ? pos + real_capacity_ - 1 : pos - 1;
+    }
+
     size_type GetNextPosition(size_type pos) {
-        return (pos + 1) % (real_capacity_);
+        return pos + 1 >= real_capacity_ ? pos + 1 - real_capacity_ : pos + 1;
     }
 };
